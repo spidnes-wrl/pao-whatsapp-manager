@@ -1,0 +1,6 @@
+{
+  "env": {
+    "SECURE_ADMIN_CODE_HASH": "@secure_admin_code_hash",
+    "NODE_ENV": "production"
+  }
+}
