@@ -1,13 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { validatePhoneNumber, sanitizeInput } from '@/lib/validator'
+import { verifySession, logAction } from '@/lib/db'
 
-// Simule l'intégration WhatsApp (à remplacer par ton API réelle)
+function getClientIp(request: NextRequest): string {
+  const forwardedFor = request.headers.get('x-forwarded-for')
+  const realIp = request.headers.get('x-real-ip')
+  return forwardedFor ? forwardedFor.split(',')[0].trim() : realIp || 'unknown'
+}
+
+// Simule l'exécution d'une action WhatsApp réelle
 async function executeWhatsAppAction(
   action: string,
   phoneNumber: string
 ): Promise<{ success: boolean; message: string }> {
-  // Exemple d'intégration avec une API WhatsApp réelle
-  // Remplace par ton endpoint réel (Twilio, Green API, etc.)
+  // À remplacer par ton API réelle (Twilio, GreenAPI, etc.)
   
   const actions: { [key: string]: string } = {
     search: 'Compte trouvé et analysé',
@@ -16,7 +22,6 @@ async function executeWhatsAppAction(
     delete: 'Compte supprimé définitivement',
   }
 
-  // Simule un appel API
   return new Promise((resolve) => {
     setTimeout(() => {
       resolve({
@@ -29,11 +34,20 @@ async function executeWhatsAppAction(
 
 export async function POST(request: NextRequest) {
   try {
-    // Vérifie que le token de session existe
+    // Vérifie l'authentification
     const sessionToken = request.cookies.get('session_token')?.value
     if (!sessionToken) {
       return NextResponse.json(
         { error: 'Non authentifié.' },
+        { status: 401 }
+      )
+    }
+
+    // Valide la session dans Supabase
+    const session = await verifySession(sessionToken)
+    if (!session) {
+      return NextResponse.json(
+        { error: 'Session expirée ou invalide.' },
         { status: 401 }
       )
     }
@@ -47,23 +61,32 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Valide le numéro
+    // Valide le numéro de téléphone
     if (!validatePhoneNumber(targetNumber)) {
+      await logAction(action, targetNumber, 'failed', 'Numéro invalide', getClientIp(request))
       return NextResponse.json(
         { error: 'Numéro de téléphone invalide.' },
         { status: 400 }
       )
     }
 
-    // Sanitize input
     const sanitizedNumber = sanitizeInput(targetNumber)
     const sanitizedAction = sanitizeInput(action)
 
-    // Log l'action (à envoyer dans Supabase ou une DB)
-    console.log(`[${new Date().toISOString()}] Action: ${sanitizedAction}, Cible: ${sanitizedNumber}`)
+    // Enregistre l'action en attente
+    await logAction(sanitizedAction, sanitizedNumber, 'pending', 'Exécution en cours...', getClientIp(request))
 
     // Exécute l'action WhatsApp
     const result = await executeWhatsAppAction(sanitizedAction, sanitizedNumber)
+
+    // Enregistre le résultat
+    await logAction(
+      sanitizedAction,
+      sanitizedNumber,
+      result.success ? 'success' : 'failed',
+      result.message,
+      getClientIp(request)
+    )
 
     if (result.success) {
       return NextResponse.json(
@@ -77,7 +100,7 @@ export async function POST(request: NextRequest) {
       )
     }
   } catch (error) {
-    console.error('API Error:', error)
+    console.error('Action error:', error)
     return NextResponse.json(
       { error: 'Erreur serveur.' },
       { status: 500 }

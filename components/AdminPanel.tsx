@@ -1,44 +1,88 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { validatePhoneNumber } from '@/lib/validator'
 
 type LogLevel = 'info' | 'success' | 'error' | 'warning'
 
 interface LogEntry {
-  message: string
-  level: LogLevel
-  timestamp: string
+  id?: string
+  action_type: string
+  target_number: string
+  status: 'pending' | 'success' | 'failed'
+  result_message: string
+  created_at?: string
+  level?: LogLevel
+  timestamp?: string
 }
 
 export default function AdminPanel() {
   const [phoneNumber, setPhoneNumber] = useState('')
   const [logs, setLogs] = useState<LogEntry[]>([
-    { message: 'Système initialisé. En attente de requête...', level: 'info', timestamp: new Date().toLocaleTimeString() }
+    {
+      action_type: 'system',
+      target_number: '-',
+      status: 'success',
+      result_message: 'Système initialisé. En attente de requête...',
+      timestamp: new Date().toLocaleTimeString(),
+      level: 'info',
+    },
   ])
   const [loading, setLoading] = useState(false)
 
-  const addLog = (message: string, level: LogLevel = 'info') => {
-    setLogs(prev => [{
-      message,
-      level,
-      timestamp: new Date().toLocaleTimeString()
-    }, ...prev])
+  useEffect(() => {
+    fetchLogs()
+  }, [])
+
+  const fetchLogs = async () => {
+    try {
+      const response = await fetch('/api/logs')
+      if (response.ok) {
+        const data = await response.json()
+        setLogs((prev) => [...data.logs, ...prev.slice(0, 50)])
+      }
+    } catch (err) {
+      console.error('Error fetching logs:', err)
+    }
+  }
+
+  const addLog = (entry: Omit<LogEntry, 'timestamp'>) => {
+    const newLog: LogEntry = {
+      ...entry,
+      timestamp: new Date().toLocaleTimeString(),
+      level: entry.status === 'success' ? 'success' : entry.status === 'failed' ? 'error' : 'warning',
+    }
+    setLogs((prev) => [newLog, ...prev])
   }
 
   const runAction = async (actionType: string, actionLabel: string) => {
     if (!phoneNumber.trim()) {
-      addLog('Erreur : Veuillez entrer un numéro cible.', 'error')
+      addLog({
+        action_type: actionType,
+        target_number: phoneNumber || 'N/A',
+        status: 'failed',
+        result_message: 'Erreur : Veuillez entrer un numéro cible.',
+      })
       return
     }
 
     if (!validatePhoneNumber(phoneNumber)) {
-      addLog('Erreur : Numéro de téléphone invalide.', 'error')
+      addLog({
+        action_type: actionType,
+        target_number: phoneNumber,
+        status: 'failed',
+        result_message: 'Erreur : Numéro de téléphone invalide.',
+      })
       return
     }
 
     setLoading(true)
-    addLog(`Cible [${phoneNumber}] : ${actionLabel}`, 'warning')
+    addLog({
+      action_type: actionType,
+      target_number: phoneNumber,
+      status: 'pending',
+      result_message: actionLabel,
+    })
 
     try {
       const response = await fetch('/api/whatsapp-action', {
@@ -53,12 +97,27 @@ export default function AdminPanel() {
       const data = await response.json()
 
       if (response.ok) {
-        addLog(`✓ SUCCESS : ${data.message}`, 'success')
+        addLog({
+          action_type: actionType,
+          target_number: phoneNumber,
+          status: 'success',
+          result_message: `✓ SUCCESS : ${data.message}`,
+        })
       } else {
-        addLog(`✗ ÉCHEC : ${data.error}`, 'error')
+        addLog({
+          action_type: actionType,
+          target_number: phoneNumber,
+          status: 'failed',
+          result_message: `✗ ÉCHEC : ${data.error}`,
+        })
       }
     } catch (err) {
-      addLog('✗ ERREUR RÉSEAU : Impossible de contacter le serveur.', 'error')
+      addLog({
+        action_type: actionType,
+        target_number: phoneNumber,
+        status: 'failed',
+        result_message: '✗ ERREUR RÉSEAU : Impossible de contacter le serveur.',
+      })
     } finally {
       setLoading(false)
     }
@@ -90,7 +149,7 @@ export default function AdminPanel() {
       </button>
       <button
         className="btn-secondary"
-        onClick={() => runAction('ban_spam', 'Application d\'un blocage pour Spam...')}
+        onClick={() => runAction('ban_spam', "Application d'un blocage pour Spam...")}
         disabled={loading}
       >
         Bannir le compte (Spam)
@@ -105,8 +164,8 @@ export default function AdminPanel() {
 
       <div className="log-window">
         {logs.map((log, idx) => (
-          <div key={idx} className={`log-entry log-${log.level}`}>
-            <span style={{ color: '#888' }}>[{log.timestamp}]</span> {log.message}
+          <div key={idx} className={`log-entry log-${log.level || log.status}`}>
+            <span style={{ color: '#888' }}>[{log.timestamp || new Date().toLocaleTimeString()}]</span> {log.result_message}
           </div>
         ))}
       </div>
